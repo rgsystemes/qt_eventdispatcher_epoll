@@ -1,4 +1,3 @@
-#include <climits>
 #include <QtCore/QPair>
 #include <QtCore/QSocketNotifier>
 #include <QtCore/QThread>
@@ -71,7 +70,7 @@ void EventDispatcherEPoll::unregisterSocketNotifier(QSocketNotifier* notifier)
 void EventDispatcherEPoll::registerTimer(
 	int timerId,
 #if QT_VERSION >= 0x060000
-	qint64 interval64,
+	qint64 interval,
 #else
 	int interval,
 #endif
@@ -81,18 +80,13 @@ void EventDispatcherEPoll::registerTimer(
 	QObject* object
 )
 {
-#if QT_VERSION >= 0x060000
-	// The internal timers are int based (more than 24 days intervals are clamped)
-	const int interval = interval64 > INT_MAX ? INT_MAX : static_cast<int>(interval64);
-#endif
-
 #ifndef QT_NO_DEBUG
 	if (timerId < 1 || interval < 0 || !object) {
 		qWarning("%s: invalid arguments", Q_FUNC_INFO);
 		return;
 	}
 
-	if (object->thread() != this->thread() && this->thread() != QThread::currentThread()) {
+	if (object->thread() != this->thread() || this->thread() != QThread::currentThread()) {
 		qWarning("%s: timers cannot be started from another thread", Q_FUNC_INFO);
 		return;
 	}
@@ -140,7 +134,7 @@ bool EventDispatcherEPoll::unregisterTimers(QObject* object)
 		return false;
 	}
 
-	if (object->thread() != this->thread() && this->thread() != QThread::currentThread()) {
+	if (object->thread() != this->thread() || this->thread() != QThread::currentThread()) {
 		qWarning("%s: timers cannot be stopped from another thread", Q_FUNC_INFO);
 		return false;
 	}

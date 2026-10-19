@@ -6,10 +6,17 @@
 #include <sys/time.h>
 #include <time.h>
 #include <errno.h>
+#include <limits>
 #include "eventdispatcher_epoll_p.h"
 #include "qt4compat.h"
 
 namespace {
+
+	// Qt reports intervals and remaining times as int
+	static int clampToInt(qint64 value)
+	{
+		return static_cast<int>(qMin(value, static_cast<qint64>(std::numeric_limits<int>::max())));
+	}
 
 	static void calculateCoarseTimerTimeout(TimerInfo* info, const struct timeval& now, struct timeval& when)
 	{
@@ -30,7 +37,7 @@ namespace {
 		//
 		// The objective is to make most timers wake up at the same time, thereby reducing CPU wakeups.
 
-		int interval     = info->interval;
+		int interval     = static_cast<int>(info->interval); // under 20 s, see registerTimer()
 		int msec         = static_cast<int>(info->when.tv_usec / 1000);
 		int max_rounding = interval / 20; // 5%
 		when             = info->when;
@@ -178,7 +185,7 @@ namespace {
 	}
 }
 
-void EventDispatcherEPollPrivate::registerTimer(int timerId, int interval, Qt::TimerType type, QObject* object)
+void EventDispatcherEPollPrivate::registerTimer(int timerId, qint64 interval, Qt::TimerType type, QObject* object)
 {
 	Q_ASSERT(interval > 0);
 
@@ -326,9 +333,9 @@ QList<QAbstractEventDispatcher::TimerInfo> EventDispatcherEPollPrivate::register
 
 		if (object == data->ti.object) {
 #if QT_VERSION < 0x050000
-			QAbstractEventDispatcher::TimerInfo ti(it.key(), data->ti.interval);
+			QAbstractEventDispatcher::TimerInfo ti(it.key(), clampToInt(data->ti.interval));
 #else
-			QAbstractEventDispatcher::TimerInfo ti(it.key(), data->ti.interval, data->ti.type);
+			QAbstractEventDispatcher::TimerInfo ti(it.key(), clampToInt(data->ti.interval), data->ti.type);
 #endif
 			res.append(ti);
 		}
@@ -375,10 +382,13 @@ int EventDispatcherEPollPrivate::remainingTime(int timerId) const
 		Q_ASSERT(!(spec.it_value.tv_sec == 0 && spec.it_value.tv_nsec == 0));
 
 		TIMESPEC_TO_TIMEVAL(&when, &spec.it_value);
-		return static_cast<int>((qulonglong(when.tv_sec) * 1000000 + when.tv_usec) / 1000);
+		return clampToInt((qint64(when.tv_sec) * 1000000 + when.tv_usec) / 1000);
 	}
 
-	// For zero timers we return -1 as well
+	// Zero timers are always due
+	if (this->m_zero_timers.contains(timerId)) {
+		return 0;
+	}
 
 	return -1;
 }

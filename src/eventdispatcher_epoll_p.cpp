@@ -8,6 +8,23 @@
 #include "eventdispatcher_epoll_p.h"
 #include "qt4compat.h"
 
+namespace {
+
+	void writeWakeUpToken(int event_fd)
+	{
+		const eventfd_t value = 1;
+		int res;
+
+		do {
+			res = eventfd_write(event_fd, value);
+		} while (Q_UNLIKELY(-1 == res && EINTR == errno));
+
+		if (Q_UNLIKELY(-1 == res)) {
+			qErrnoWarning("%s: eventfd_write() failed", Q_FUNC_INFO);
+		}
+	}
+}
+
 EventDispatcherEPollPrivate::EventDispatcherEPollPrivate(EventDispatcherEPoll* const q)
 	: q_ptr(q),
 	  m_epoll_fd(-1), m_event_fd(-1),
@@ -68,7 +85,8 @@ bool EventDispatcherEPollPrivate::processEvents(QEventLoop::ProcessEventsFlags f
 	// - QCoreApplication::postEvent() always calls wakeUp();
 	// - the CleanUp at the end of QCoreApplicationPrivate::sendPostedEvents() calls wakeUp() whenever events are
 	//   left in the queue (canWait is false);
-	// - the eventfd wakeup token is only consumed by epoll_wait(), after sendPostedEvents(), so it can't be lost.
+	// - the eventfd wakeup token is only consumed by epoll_wait(), after sendPostedEvents(), and wake_up_handler()
+	//   re-arms m_wakeups before draining it, so a concurrent wakeUp() always leaves a token.
 	// So epoll_wait() returns right away whenever posted events are pending. The return value only reports activated
 	// timers/notifiers, as the Qt 6 UNIX event dispatcher does.
 	bool result = false;
@@ -167,6 +185,12 @@ bool EventDispatcherEPollPrivate::processEvents(QEventLoop::ProcessEventsFlags f
 
 void EventDispatcherEPollPrivate::wake_up_handler(void)
 {
+#if QT_VERSION >= 0x040400
+	// Re-arm before draining the eventfd: otherwise a wakeUp() called between the read and the re-arm
+	// would be skipped without leaving a token, and the next epoll_wait() could block indefinitely
+	this->m_wakeups.fetchAndStoreOrdered(0);
+#endif
+
 	eventfd_t value;
 	int res;
 	do {
@@ -178,8 +202,11 @@ void EventDispatcherEPollPrivate::wake_up_handler(void)
 	}
 
 #if QT_VERSION >= 0x040400
-	if (Q_UNLIKELY(!this->m_wakeups.testAndSetRelease(1, 0))) {
-		qCritical("%s: internal error, testAndSetRelease(1, 0) failed!", Q_FUNC_INFO);
+	// A wakeUp() called between the re-arm and the read may have had its token drained: write it again,
+	// otherwise m_wakeups would stay set without a pending token and every later wakeUp() would be skipped.
+	// At worst this causes one spurious wakeup.
+	if (this->m_wakeups.fetchAndAddOrdered(0) != 0) {
+		writeWakeUpToken(this->m_event_fd);
 	}
 #endif
 }
@@ -190,15 +217,6 @@ void EventDispatcherEPollPrivate::wakeup(void)
 	if (this->m_wakeups.testAndSetAcquire(0, 1))
 #endif
 	{
-		const eventfd_t value = 1;
-		int res;
-
-		do {
-			res = eventfd_write(this->m_event_fd, value);
-		} while (Q_UNLIKELY(-1 == res && EINTR == errno));
-
-		if (Q_UNLIKELY(-1 == res)) {
-			qErrnoWarning("%s: eventfd_write() failed", Q_FUNC_INFO);
-		}
+		writeWakeUpToken(this->m_event_fd);
 	}
 }
