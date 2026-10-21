@@ -1,3 +1,4 @@
+#include <limits>
 #include <QtCore/QPair>
 #include <QtCore/QSocketNotifier>
 #include <QtCore/QThread>
@@ -23,11 +24,13 @@ bool EventDispatcherEPoll::processEvents(QEventLoop::ProcessEventsFlags flags)
 	return d->processEvents(flags);
 }
 
+#if QT_VERSION < 0x060000
 bool EventDispatcherEPoll::hasPendingEvents(void)
 {
 	extern uint qGlobalPostedEventsCount();
 	return qGlobalPostedEventsCount() > 0;
 }
+#endif
 
 void EventDispatcherEPoll::registerSocketNotifier(QSocketNotifier* notifier)
 {
@@ -67,7 +70,11 @@ void EventDispatcherEPoll::unregisterSocketNotifier(QSocketNotifier* notifier)
 
 void EventDispatcherEPoll::registerTimer(
 	int timerId,
+#if QT_VERSION >= 0x060000
+	qint64 interval,
+#else
 	int interval,
+#endif
 #if QT_VERSION >= 0x050000
 	Qt::TimerType timerType,
 #endif
@@ -80,9 +87,17 @@ void EventDispatcherEPoll::registerTimer(
 		return;
 	}
 
-	if (object->thread() != this->thread() && this->thread() != QThread::currentThread()) {
+	if (object->thread() != this->thread() || this->thread() != QThread::currentThread()) {
 		qWarning("%s: timers cannot be started from another thread", Q_FUNC_INFO);
 		return;
+	}
+#endif
+
+#if QT_VERSION >= 0x060000
+	// The timer fires at the right time, but Qt reads intervals back as int (see registeredTimers())
+	if (Q_UNLIKELY(interval > std::numeric_limits<int>::max())) {
+		qWarning("%s: interval %lld ms is reported as %d ms: the timer fires early if its object moves to another thread",
+			Q_FUNC_INFO, static_cast<long long>(interval), std::numeric_limits<int>::max());
 	}
 #endif
 
@@ -128,7 +143,7 @@ bool EventDispatcherEPoll::unregisterTimers(QObject* object)
 		return false;
 	}
 
-	if (object->thread() != this->thread() && this->thread() != QThread::currentThread()) {
+	if (object->thread() != this->thread() || this->thread() != QThread::currentThread()) {
 		qWarning("%s: timers cannot be stopped from another thread", Q_FUNC_INFO);
 		return false;
 	}
@@ -170,6 +185,8 @@ void EventDispatcherEPoll::interrupt(void)
 	this->wakeUp();
 }
 
+#if QT_VERSION < 0x060000
 void EventDispatcherEPoll::flush(void)
 {
 }
+#endif

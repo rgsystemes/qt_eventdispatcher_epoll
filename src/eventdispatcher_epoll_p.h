@@ -27,7 +27,7 @@ struct TimerInfo {
 	QObject* object;
 	struct timeval when;
 	int timerId;
-	int interval;
+	qint64 interval;
 	int fd;
 	Qt::TimerType type;
 };
@@ -58,7 +58,7 @@ public:
 	bool processEvents(QEventLoop::ProcessEventsFlags flags);
 	void registerSocketNotifier(QSocketNotifier* notifier);
 	void unregisterSocketNotifier(QSocketNotifier* notifier);
-	void registerTimer(int timerId, int interval, Qt::TimerType type, QObject* object);
+	void registerTimer(int timerId, qint64 interval, Qt::TimerType type, QObject* object);
 	void registerZeroTimer(int timerId, QObject* object);
 	bool unregisterTimer(int timerId);
 	bool unregisterTimers(QObject* object);
