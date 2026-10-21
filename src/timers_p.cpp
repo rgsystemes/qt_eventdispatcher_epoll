@@ -12,7 +12,9 @@
 
 namespace {
 
-	// Qt reports intervals and remaining times as int
+	// Qt reads intervals and remaining times back as int (QAbstractEventDispatcher::TimerInfo::interval is still int
+	// in Qt 6.8): intervals above INT_MAX ms are truncated, so moveToThread() re-registers them shorter.
+	// Lifting this would mean implementing QAbstractEventDispatcherV2 (Qt >= 6.8).
 	static int clampToInt(qint64 value)
 	{
 		return static_cast<int>(qMin(value, static_cast<qint64>(std::numeric_limits<int>::max())));

@@ -1,3 +1,4 @@
+#include <limits>
 #include <QtCore/QPair>
 #include <QtCore/QSocketNotifier>
 #include <QtCore/QThread>
@@ -89,6 +90,14 @@ void EventDispatcherEPoll::registerTimer(
 	if (object->thread() != this->thread() || this->thread() != QThread::currentThread()) {
 		qWarning("%s: timers cannot be started from another thread", Q_FUNC_INFO);
 		return;
+	}
+#endif
+
+#if QT_VERSION >= 0x060000
+	// The timer fires at the right time, but Qt reads intervals back as int (see registeredTimers())
+	if (Q_UNLIKELY(interval > std::numeric_limits<int>::max())) {
+		qWarning("%s: interval %lld ms is reported as %d ms: the timer fires early if its object moves to another thread",
+			Q_FUNC_INFO, static_cast<long long>(interval), std::numeric_limits<int>::max());
 	}
 #endif
 
